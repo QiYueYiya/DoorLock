@@ -28,7 +28,7 @@ jobs:
         run: |
           pio run
           echo "编译时间：$(date +'%Y年%m月%d日 %H点%M分')" > release.txt
-          echo "path=.pio/build/$(sed -n 's/board = \(.*\)/\1/p' platformio.ini)/to/firmware.bin" >> $GITHUB_OUTPUT
+          echo "path=.pio/build/$(sed -n 's/board = \(.*\)/\1/p' platformio.ini)/firmware.bin" >> $GITHUB_OUTPUT
     
       - name: 将固件上传到release
         uses: softprops/action-gh-release@master
