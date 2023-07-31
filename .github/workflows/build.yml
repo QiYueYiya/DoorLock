@@ -1,0 +1,41 @@
+name: PlatformIO CI
+
+on: 
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: 安装PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: 开始编译
+        id: build
+        run: |
+          pio run
+          echo "编译时间：$(date +'%Y年%m月%d日 %H点%M分')" > release.txt
+          echo "path=.pio/build/$(sed -n 's/board = \(.*\)/\1/p' platformio.ini)/to/firmware.bin" >> $GITHUB_OUTPUT
+    
+      - name: 将固件上传到release
+        uses: softprops/action-gh-release@v1
+        env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+            name: DoorLock
+            tag_name: "DoorLock"
+            body_path: release.txt
+            files: ${{ steps.build.outputs.path }}
