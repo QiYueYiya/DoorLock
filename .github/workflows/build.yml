@@ -31,7 +31,7 @@ jobs:
           echo "path=.pio/build/$(sed -n 's/board = \(.*\)/\1/p' platformio.ini)/firmware.bin" >> $GITHUB_OUTPUT
     
       - name: 将固件上传到release
-        uses: softprops/action-gh-release@master
+        uses: softprops/action-gh-release@v1
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
