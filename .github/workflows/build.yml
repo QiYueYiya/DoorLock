@@ -2,6 +2,8 @@ name: PlatformIO CI
 
 on: 
   push:
+    paths:
+      - 'src/main.cpp'
   workflow_dispatch:
 
 jobs:
