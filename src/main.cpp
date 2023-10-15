@@ -49,7 +49,7 @@ const char *lock_state_topic = "DoorLock/state"; // 上传状态主题
 const char *lock_cmd_topic = "DoorLock/cmd";     // 接受命令主题
 // 定义上一次按下物理开关的时间
 unsigned long lastClickTime = 0;
-unsigned long lastTestTime = 0;
+unsigned long lastRestartTime = 0;
 // WiFi对象
 WiFiClient espClient;
 // MQTT对象
@@ -67,15 +67,14 @@ void pub_mqtt_state()
     Serial.println("上传门锁状态: " + lock_state);
     ESP.wdtFeed();
 }
+
 void nfc_restart()
 {
     digitalWrite(NFC_PIN, LOW);
-    delay(10);
     digitalWrite(NFC_PIN, HIGH);
-    delay(10);
-    SPI.begin();
+    // SPI.begin();
     rfid.PCD_Init();
-    lastTestTime = millis();
+    lastRestartTime = millis();
 }
 
 void DoorSensor()
@@ -95,14 +94,10 @@ void DoorSensor()
             // 更新开关状态变量
             DoorState = newDoorState;
             if (DoorState)
-            {
                 door_state = "ON";
-                nfc_restart();
-            }
             else
-            {
                 door_state = "OFF";
-            }
+            nfc_restart();
             pub_mqtt_state();
         }
     }
@@ -203,8 +198,8 @@ void NFC()
             lastClickTime = clickTime;
         }
     }
-    unsigned long testTime = millis();
-    if (testTime - lastTestTime > 900000)
+    unsigned long restartTime = millis();
+    if (restartTime - lastRestartTime > 600000)
         nfc_restart();
 }
 
