@@ -18,7 +18,7 @@
  * info.h只是方便我自己不用每次填写配置
  * 其他人在下方配置wifi和mqtt即可
  * 第一次刷入需将platformio.ini的上传方式改为串口模式
-*/
+ */
 const char *ssid = "WiFi名称";
 const char *password = "WiFi密码";
 const char *mqtt_username = "MQTT用户名";
@@ -40,15 +40,17 @@ const byte User_ID[CARDS][CARD_SIZE] = { // 存储的卡片UID
 // 房门开合状态
 String door_state = "ON";
 bool DoorState = HIGH;
-const char *door_state_topic = "sensor/door/state";
-const char *door_nfc_topic = "sensor/door/nfc";
+const char *door_state_topic = "binary_sensor/door/state";
+const char *door_nfc_topic = "binary_sensor/door/nfc";
 // 门锁
 String lock_state = "UNLOCK";
-bool SwitchState = HIGH;
-const char *lock_state_topic = "DoorLock/state"; // 上传状态主题
-const char *lock_cmd_topic = "DoorLock/cmd";     // 接受命令主题
+const char *lock_state_topic = "lock/doorlock/state"; // 上传状态主题
+const char *lock_cmd_topic = "lock/doorlock/cmd";     // 接受命令主题
+// 定义物理开关状态（高电平松开，低电平按下）
+bool prevSwitchState = true;
 // 定义上一次按下物理开关的时间
 unsigned long lastClickTime = 0;
+// 定义上一次重启NFC模块的时间
 unsigned long lastRestartTime = 0;
 // WiFi对象
 WiFiClient espClient;
@@ -141,6 +143,7 @@ void callback(char *topic, byte *payload, unsigned int length)
             lock_state = "LOCK";
         else
             lock_state = "UNLOCK";
+        lastClickTime = millis();
         Lock();
     }
 }
@@ -152,7 +155,7 @@ void printHex(byte *buffer, byte bufferSize)
     {
         Serial.print(buffer[i] < 0x10 ? "0" : "");
         Serial.print(buffer[i], HEX);
-        cardUid += "0x"+String(buffer[i] < 0x10 ? "0" : "")+String(buffer[i], HEX)+",";
+        cardUid += "0x" + String(buffer[i] < 0x10 ? "0" : "") + String(buffer[i], HEX) + ",";
     }
     Serial.println();
     client.publish(door_nfc_topic, cardUid.c_str());
@@ -208,24 +211,24 @@ void Button()
     // 读取开关状态
     bool newSwitchState = digitalRead(SWITCH_PIN);
     // 如果开关状态改变
-    if (newSwitchState != SwitchState)
+    if (newSwitchState != prevSwitchState)
     {
         // 延迟10毫秒避免状态抖动
         delay(10);
         // 再次读取开关状态
         newSwitchState = digitalRead(SWITCH_PIN);
         // 如果开关状态仍然改变
-        if (newSwitchState != SwitchState)
+        if (newSwitchState != prevSwitchState)
         {
             // 更新开关状态变量
-            SwitchState = newSwitchState;
+            prevSwitchState = newSwitchState;
             // 如果开关打开
-            if (!SwitchState)
+            if (!prevSwitchState)
             {
                 // 获取当前时间
                 unsigned long clickTime = millis();
                 // 如果距离上次单击时间超过500毫秒
-                if (clickTime - lastClickTime > 300)
+                if (clickTime - lastClickTime > 500)
                 {
                     // 记录当前单击时间，并打印单击状态
                     lastClickTime = clickTime;
@@ -240,42 +243,43 @@ void WiFiConnect()
 {
     WiFi.hostname(device_name);
     WiFi.begin(ssid, password);
-    Serial.println("\n正在连接WiFi，请稍等...");
-    while (WiFi.status() != WL_CONNECTED)
+    Serial.print("\n正在连接WiFi, 请稍等");
+    while (WiFi.status() != WL_CONNECTED && digitalRead(SWITCH_PIN))
     {
         delay(1000);
+        Serial.print(".");
     }
-    Serial.print("WiFi已连接！WiFi名称: ");
-    Serial.println(WiFi.SSID());
-    Serial.print("IP地址: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("MAC地址: ");
-    Serial.println(WiFi.macAddress());
+    if (digitalRead(SWITCH_PIN))
+    {
+        Serial.printf("\nWiFi名称: %s\n", ssid);
+        Serial.print("IP地址: ");
+        Serial.println(WiFi.localIP());
+        Serial.println("MAC地址: " + WiFi.macAddress());
+    }
 }
 
 void MQTTConnect()
 {
     client.setServer(mqtt_broker, mqtt_port);
     client.setCallback(callback);
-    while (!client.connected())
+    while (!client.connected() && digitalRead(SWITCH_PIN))
     {
-        String client_id = device_name + "-";
-        client_id += String(WiFi.macAddress());
-        Serial.printf("设备%s正在连接到EMQX MQTT服务器...\n", client_id.c_str());
+        String client_id = device_name + "-" + WiFi.macAddress();
+        Serial.printf("设备%s正在连接到MQTT服务器...\n", client_id.c_str());
         if (client.connect(client_id.c_str(), mqtt_username, mqtt_password))
         {
-            Serial.println("EMQX MQTT服务器已连接");
+            Serial.println("MQTT服务器已连接");
+            client.subscribe(lock_cmd_topic);
+            DoorSensor();
+            pub_mqtt_state();
         }
         else
         {
-            Serial.print("连接失败，即将重试 代码: ");
+            Serial.print("连接失败, 即将重试 代码：");
             Serial.println(client.state());
             delay(1000);
         }
     }
-    client.subscribe(lock_cmd_topic);
-    DoorSensor();
-    pub_mqtt_state();
 }
 
 void setup()
@@ -290,12 +294,14 @@ void setup()
     digitalWrite(NFC_PIN, HIGH);
     myservo.attach(SERVO_PIN, 500, 2500);
     myservo.write(0);
-    WiFiConnect(); // 连接 WiFi
-    MQTTConnect(); // 连接 MQTT 服务器
+    // 连接 WiFi
+    WiFiConnect();
+    // 连接 MQTT 服务器
+    MQTTConnect();
     SPI.begin();
     rfid.PCD_Init();
-    ArduinoOTA.setHostname(device_name.c_str()); // OTA设置并启动
-    // ArduinoOTA.setPassword(password);
+    // OTA设置并启动
+    ArduinoOTA.setHostname(device_name.c_str());
     ArduinoOTA.begin();
     Serial.println("初始化完成");
 }
@@ -304,19 +310,17 @@ void loop()
 {
     ArduinoOTA.handle();
     client.loop();
-    if (!client.connected())
+    if (WiFi.status() != WL_CONNECTED && digitalRead(SWITCH_PIN))
     {
-        if (WiFi.status() != WL_CONNECTED)
-        {
-            Serial.println("WiFi已断开，将即将连接WIFi");
-            WiFiConnect();
-        }
-        Serial.println("MQTT服务器已断开");
-        if (espClient.connect(mqtt_broker, mqtt_port))
-        {
-            Serial.println("即将重新连接MQTT服务器");
-            MQTTConnect();
-        }
+        Serial.print("WiFi已断开, 即将重新连接WiFi");
+        WiFiConnect();
+        ArduinoOTA.setHostname(device_name.c_str());
+        ArduinoOTA.begin();
+    }
+    if (!client.connected() && digitalRead(SWITCH_PIN))
+    {
+        Serial.println("MQTT已断开, 即将重新连接MQTT");
+        MQTTConnect();
     }
     DoorSensor();
     Button();
