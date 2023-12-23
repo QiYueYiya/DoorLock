@@ -1,4 +1,5 @@
 #include <ArduinoOTA.h>
+#include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <MFRC522.h>
 #include <PubSubClient.h>
@@ -30,18 +31,17 @@ const int mqtt_port = 1883;
 // 设备名称
 String device_name = "DoorLock";
 // NFC配置
-const int CARDS = 4;                     // 存储的卡片数量上限
-const int CARD_SIZE = 4;                 // 卡片UID的长度
-const byte User_ID[CARDS][CARD_SIZE] = { // 存储的卡片UID
-    {0xfd, 0x13, 0x55, 0x3f},
-    {0x01, 0xED, 0x4D, 0x1C},
-    {},
-    {}};
+const int CARDS = 4;                                         // 存储的卡片数量上限
+const int CARD_SIZE = 4;                                     // 卡片UID的长度
+byte User_ID[CARDS][CARD_SIZE] = {{0x01, 0xED, 0x4D, 0x1C}}; // 存储的卡片UID
+String WaitReadCard = "OFF";
+const char *nfc_uid_topic = "sensor/door/nfc";
+const char *nfc_state_topic = "switch/nfc/state";
+const char *nfc_cmd_topic = "switch/nfc/cmd";
 // 房门开合状态
 String door_state = "ON";
 bool DoorState = HIGH;
 const char *door_state_topic = "binary_sensor/door/state";
-const char *door_nfc_topic = "binary_sensor/door/nfc";
 // 门锁
 String lock_state = "UNLOCK";
 const char *lock_state_topic = "lock/doorlock/state"; // 上传状态主题
@@ -63,6 +63,8 @@ MFRC522 rfid(SS_PIN, RST_PIN);
 
 void pub_mqtt_state()
 {
+    client.publish(nfc_state_topic, WaitReadCard.c_str());
+    Serial.println("上传房门状态: " + door_state);
     client.publish(door_state_topic, door_state.c_str());
     Serial.println("上传房门状态: " + door_state);
     client.publish(lock_state_topic, lock_state.c_str());
@@ -72,11 +74,16 @@ void pub_mqtt_state()
 
 void nfc_restart()
 {
-    digitalWrite(NFC_PIN, LOW);
-    digitalWrite(NFC_PIN, HIGH);
-    // SPI.begin();
-    rfid.PCD_Init();
-    lastRestartTime = millis();
+    unsigned long restartTime = millis();
+    if (restartTime - lastRestartTime > time_stamp)
+    {
+        digitalWrite(NFC_PIN, LOW);
+        delay(10);
+        digitalWrite(NFC_PIN, HIGH);
+        // SPI.begin();
+        rfid.PCD_Init();
+        lastRestartTime = millis();
+    }
 }
 
 void DoorSensor()
@@ -99,7 +106,6 @@ void DoorSensor()
                 door_state = "ON";
             else
                 door_state = "OFF";
-            nfc_restart();
             pub_mqtt_state();
         }
     }
@@ -146,19 +152,47 @@ void callback(char *topic, byte *payload, unsigned int length)
         lastClickTime = millis();
         Lock();
     }
+    else if (strcmp(topic, nfc_cmd_topic) == 0)
+    {
+        WaitReadCard = message;
+        pub_mqtt_state();
+    }
 }
 
-void printHex(byte *buffer, byte bufferSize)
+void eepromWrite()
+{
+    for (int i = 0; i < CARDS; i++)
+    {
+        EEPROM.put(i * CARD_SIZE, User_ID[i]);
+    }
+    EEPROM.commit();
+}
+
+void eepromRead()
+{
+    String all_uid = "";
+    for (int i = 0; i < CARDS; i++)
+    {
+        EEPROM.get(i * CARD_SIZE, User_ID[i]);
+        for (int j = 0; j < CARD_SIZE; j++)
+        {
+            all_uid.concat(String(User_ID[i][j] < 0x10 ? "0" : ""));
+            all_uid.concat(String(User_ID[i][j], HEX));
+        }
+        all_uid.concat(i < CARDS ? ",\n" : "");
+    }
+    client.publish(nfc_uid_topic, all_uid.c_str());
+}
+
+String rfidReadUid(byte *buffer, byte bufferSize)
 {
     String cardUid = "";
     for (byte i = 0; i < bufferSize; i++)
     {
-        Serial.print(buffer[i] < 0x10 ? "0" : "");
-        Serial.print(buffer[i], HEX);
-        cardUid += "0x" + String(buffer[i] < 0x10 ? "0" : "") + String(buffer[i], HEX) + ",";
+        cardUid.concat(String(buffer[i] < 0x10 ? "0" : ""));
+        cardUid.concat(String(buffer[i], HEX));
     }
-    Serial.println();
-    client.publish(door_nfc_topic, cardUid.c_str());
+    return cardUid;
 }
 
 void NFC()
@@ -172,27 +206,62 @@ void NFC()
             return;
         if (rfid.PICC_ReadCardSerial())
         {
-            Serial.print("Card UID: ");
-            printHex(rfid.uid.uidByte, rfid.uid.size);
-            // 验证
+            String cardUid = rfidReadUid(rfid.uid.uidByte, rfid.uid.size);
+            Serial.println("卡片UID: " + cardUid);
+            client.publish(nfc_uid_topic, ("UID:" + cardUid).c_str());
+            bool found = false;
             for (byte num = 0; num < CARDS; num++)
             {
-                byte i;
-                for (i = 0; i < rfid.uid.size; i++)
+                String storedUid = rfidReadUid(User_ID[num], CARD_SIZE);
+                if (WaitReadCard == "OFF" && cardUid.equals(storedUid))
                 {
-                    if (rfid.uid.uidByte[i] != User_ID[num][i])
-                        break;
-                }
-                if (i == rfid.uid.size)
-                {
-                    Serial.println("Success");
+                    Serial.println("验证通过");
                     Lock();
                     break;
                 }
-                else if (num == CARDS - 1)
+                else if (WaitReadCard == "OFF" && num == CARDS - 1)
                 {
-                    Serial.println("Failed");
+                    Serial.println("验证失败");
                 }
+                else if (WaitReadCard == "ON" && cardUid.equals(storedUid))
+                {
+                    memset(User_ID[num], 0, CARD_SIZE);
+                    eepromWrite();
+                    Serial.println("已删除UID: " + cardUid);
+                    found = true;
+                    WaitReadCard = "OFF";
+                    client.publish(nfc_state_topic, WaitReadCard.c_str());
+                    break;
+                }
+            }
+            if (WaitReadCard == "ON" && !found)
+            {
+                // 查看User_ID有几组数据
+                int index = -1;
+                for (int i = 0; i < CARDS; i++)
+                {
+                    if (User_ID[i][0] == '\0')
+                    {
+                        index = i;
+                        break;
+                    }
+                }
+                if (index != -1)
+                {
+                    // 将UID添加到User_ID变量
+                    for (int i = 0; i < rfid.uid.size; i++)
+                    {
+                        User_ID[index][i] = rfid.uid.uidByte[i];
+                    }
+                    eepromWrite();
+                    Serial.println("已添加UID到内部存储");
+                }
+                else
+                {
+                    Serial.println("无法添加UID，存储已满");
+                }
+                WaitReadCard = "OFF";
+                client.publish(nfc_state_topic, WaitReadCard.c_str());
             }
             // 使放置在读卡区的IC卡进入休眠状态，不再重复读卡
             rfid.PICC_HaltA();
@@ -201,9 +270,7 @@ void NFC()
             lastClickTime = clickTime;
         }
     }
-    unsigned long restartTime = millis();
-    if (restartTime - lastRestartTime > 600000)
-        nfc_restart();
+    nfc_restart();
 }
 
 void Button()
@@ -270,6 +337,7 @@ void MQTTConnect()
         {
             Serial.println("MQTT服务器已连接");
             client.subscribe(lock_cmd_topic);
+            client.subscribe(nfc_cmd_topic);
             DoorSensor();
             pub_mqtt_state();
         }
@@ -300,6 +368,13 @@ void setup()
     MQTTConnect();
     SPI.begin();
     rfid.PCD_Init();
+    EEPROM.begin(CARDS * CARD_SIZE);
+    eepromRead();
+    // for (int i = 0; i < CARDS * CARD_SIZE; i++)
+    // {
+    //     EEPROM.write(i, 0);
+    // }
+    // EEPROM.commit();
     // OTA设置并启动
     ArduinoOTA.setHostname(device_name.c_str());
     ArduinoOTA.begin();

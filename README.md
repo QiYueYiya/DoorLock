@@ -4,7 +4,7 @@
 3. 房门开启时无法上锁。
 4. 定时重启NFC模块防止休眠无法刷卡。
 5. 支持WiFi OTA更新固件(第一次刷入需将platformio.ini的上传方式改为串口模式)。
-6. 使用NFC卡片前，需先扫描一次卡片，卡片UID将会显示在串口或mqtt主题“sensor/door/nfc”处，请将UID写入程序的NFC配置，然后重新刷写程序。
+6. 打开"Add/Remove Card"后，首次扫描NFC卡为增加，再次扫描为删除。
 
 ## 固件下载
 [firmware.bin](https://github.com/QiYueYiya/DoorLock/releases/download/DoorLock/firmware.bin)
@@ -13,17 +13,25 @@
 configuration.yaml
 ```
 mqtt:
+  sensor:
+    - unique_id: door_nfc_uid
+      name: "Door NFC UID"
+      state_topic: "sensor/door/nfc"
+      device:
+        name: "门锁"
+        model: "DoorLock"
+        manufacturer: "厂商名称"
+        identifiers: "设备识别符"
   binary_sensor:
     - unique_id: DoorSensor
       name: "房门"
       state_topic: "sensor/door/state"
       device_class: "door"
-      qos: 2
       device:
         name: "门锁"
-        model: "qiyueyi.mqtt.doorlock"
+        model: "DoorLock"
         manufacturer: "厂商名称"
-        identifiers: "设备MAC地址"
+        identifiers: "设备识别符"
   lock:
     - unique_id: DoorLock
       name: "门锁"
@@ -33,12 +41,21 @@ mqtt:
       payload_unlock: "UNLOCK"
       state_locked: "LOCK"
       state_unlocked: "UNLOCK"
-      qos: 2
       device:
         name: "门锁"
-        model: "qiyueyi.mqtt.doorlock"
+        model: "DoorLock"
         manufacturer: "厂商名称"
-        identifiers: "设备MAC地址"
+        identifiers: "设备识别符"
+  switch:
+    - unique_id: add_nfc
+      name: "Add/Remove Card"
+      state_topic: "switch/nfc/state"
+      command_topic: "switch/nfc/cmd"
+      device:
+        name: "门锁"
+        model: "DoorLock"
+        manufacturer: "厂商名称"
+        identifiers: "设备识别符"
 ```
 
 ## 材料
