@@ -370,11 +370,6 @@ void setup()
     rfid.PCD_Init();
     EEPROM.begin(CARDS * CARD_SIZE);
     eepromRead();
-    // for (int i = 0; i < CARDS * CARD_SIZE; i++)
-    // {
-    //     EEPROM.write(i, 0);
-    // }
-    // EEPROM.commit();
     // OTA设置并启动
     ArduinoOTA.setHostname(device_name.c_str());
     ArduinoOTA.begin();
