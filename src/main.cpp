@@ -75,7 +75,7 @@ void pub_mqtt_state()
 void nfc_restart()
 {
     unsigned long restartTime = millis();
-    if (restartTime - lastRestartTime > time_stamp)
+    if (restartTime - lastRestartTime > 300000)
     {
         digitalWrite(NFC_PIN, LOW);
         delay(10);
