@@ -174,12 +174,15 @@ void eepromRead()
     for (int i = 0; i < CARDS; i++)
     {
         EEPROM.get(i * CARD_SIZE, User_ID[i]);
-        for (int j = 0; j < CARD_SIZE; j++)
+        if (User_ID[i][0] != '\0')
         {
-            all_uid.concat(String(User_ID[i][j] < 0x10 ? "0" : ""));
-            all_uid.concat(String(User_ID[i][j], HEX));
+            for (int j = 0; j < CARD_SIZE; j++)
+            {
+                all_uid.concat(String(User_ID[i][j] < 0x10 ? "0" : ""));
+                all_uid.concat(String(User_ID[i][j], HEX));
+            }
+            all_uid.concat(i < CARDS ? ",\n" : "");
         }
-        all_uid.concat(i < CARDS ? ",\n" : "");
     }
     client.publish(nfc_uid_topic, all_uid.c_str());
 }
